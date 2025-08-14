@@ -1,14 +1,26 @@
-from telegram import Update
-from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, ContextTypes, filters
-import re
 import os
+import telebot
+import re
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")  # Get from Render environment variable
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+bot = telebot.TeleBot(BOT_TOKEN)
 
-def process_file(filepath):
-    with open(filepath, "r", encoding="utf-8") as f:
-        content = f.read()
+@bot.message_handler(commands=['rajbhai'])
+def start(message):
+    bot.reply_to(message, "Send me your .bat file and I'll process it.")
 
+@bot.message_handler(content_types=['document'])
+def handle_document(message):
+    file_info = bot.get_file(message.document.file_id)
+    downloaded_file = bot.download_file(file_info.file_path)
+
+    input_filename = message.document.file_name
+    output_filename = os.path.splitext(input_filename)[0] + "_converted.txt"
+
+    # Read original content
+    content = downloaded_file.decode('utf-8', errors='ignore')
+
+    # Regex patterns
     lecture_pattern = re.compile(
         r'set\s+"lecture_\d+=(.*?)"\s.*?N_m3u8DL-RE\s+"(https?://[^\s"]+)',
         re.DOTALL
@@ -28,7 +40,6 @@ def process_file(filepath):
         re.DOTALL
     ):
         block = match.group(0)
-
         lecture_match = lecture_pattern.search(block)
         if lecture_match:
             title, url = lecture_match.groups()
@@ -42,47 +53,9 @@ def process_file(filepath):
             output_lines.append(f"{title.strip()} : {url.strip()}")
             count_pdf += 1
 
-    output_file = os.path.splitext(filepath)[0] + "_converted.txt"
-    with open(output_file, "w", encoding="utf-8") as f:
-        f.write("\n".join(output_lines))
+    result_text = "\n".join(output_lines)
+    result_text += f"\n📽 Total m3u8 links: {count_m3u8}\n📄 Total pdf links: {count_pdf}"
 
-    return output_file, count_m3u8, count_pdf
+    bot.send_document(message.chat.id, result_text.encode('utf-8'), visible_file_name=output_filename)
 
-async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    doc = update.message.document
-    file_path = f"temp_{doc.file_name}"
-
-    # Download file
-    new_file = await doc.get_file()
-    await new_file.download_to_drive(file_path)
-
-    # Process
-    output_file, count_m3u8, count_pdf = process_file(file_path)
-
-    # Reply
-    await update.message.reply_text(
-        f"🎥 Total m3u8 links: {count_m3u8}\n📄 Total pdf links: {count_pdf}"
-    )
-    await update.message.reply_document(document=open(output_file, "rb"))
-
-    # Cleanup
-    os.remove(file_path)
-    os.remove(output_file)
-
-# New command /rajbhai
-async def rajbhai(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "Hey! Raj Bhai is here 🚀\nSend me a .bat or .txt file and I'll extract your links."
-    )
-
-if __name__ == "__main__":
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
-
-    # Command for /rajbhai
-    app.add_handler(CommandHandler("rajbhai", rajbhai))
-
-    # Handle file uploads
-    app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
-
-    print("Bot is running...")
-    app.run_polling()
+bot.polling(none_stop=True)
